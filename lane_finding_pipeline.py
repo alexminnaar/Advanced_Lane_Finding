@@ -8,6 +8,9 @@ from moviepy.editor import VideoFileClip
 class LaneFindingPipeline:
     def __init__(self):
         self.mtx, self.dist = self.get_distortion_coefficients()
+        self.frame_counter = 0
+        self.left_lane_history = []
+        self.right_lane_history = []
 
     def get_distortion_coefficients(self):
         '''
@@ -194,6 +197,12 @@ class LaneFindingPipeline:
         # plt.ylim(720, 0)
         # plt.show()
 
+
+        lane_center = ((right_fitx[-1] - left_fitx[-1]) / 2) + left_fitx[-1]
+        lane_offset = np.abs(lane_center - 650)
+        # print lane_center
+        # print lane_offset
+
         # Define conversions in x and y from pixels space to meters
         ym_per_pix = 30.0 / 720  # meters per pixel in y dimension
         xm_per_pix = 3.7 / 700  # meters per pixel in x dimension
@@ -213,7 +222,9 @@ class LaneFindingPipeline:
                                      1]) ** 2) ** 1.5) / np.absolute(
                 2 * right_fit_cr[0])
 
-        return ploty, left_fitx, right_fitx, left_curverad, right_curverad
+        lane_offset_meters = lane_offset * xm_per_pix
+
+        return ploty, left_fitx, right_fitx, left_curverad, right_curverad, lane_offset_meters
 
     def line_fitting_secondary(self, img, left_fit, right_fit):
         '''
@@ -272,7 +283,7 @@ class LaneFindingPipeline:
 
         return ploty, left_fitx, right_fitx, left_curverad, right_curverad
 
-    def inverse_warp(self, img, warped, left_fitx, right_fitx, ploty, Minv):
+    def inverse_warp(self, img, warped, left_fitx, right_fitx, ploty, Minv, left_curvature, right_curvature, offset):
         '''
         When we are done finding lanes in the transformed space, we want to view them in the original space.
         :param img: image in original space
@@ -287,6 +298,8 @@ class LaneFindingPipeline:
         warp_zero = np.zeros_like(warped).astype(np.uint8)
         color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
 
+        # print offset
+
         # Recast the x and y points into usable format for cv2.fillPoly()
         pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
         pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
@@ -297,8 +310,17 @@ class LaneFindingPipeline:
 
         # Warp the blank back to original image space using inverse perspective matrix (Minv)
         newwarp = cv2.warpPerspective(color_warp, Minv, (image.shape[1], image.shape[0]))
+
         # Combine the result with the original image
         result = cv2.addWeighted(image, 1, newwarp, 0.3, 0)
+
+        cv2.putText(result, "left lane curvature: %s m" % str(left_curvature), (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(result, "right lane curvature: %s m" % str(right_curvature), (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(result, "lane offset: %s m" % str(offset), (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255),
+                    2, cv2.LINE_AA)
+
         return result
 
     def apply_pipeline(self, img):
@@ -321,9 +343,21 @@ class LaneFindingPipeline:
         # Step 3.5: We also need the inverse transform to get back to the original image space
         Minv, _ = self.perspective_transform(thresholded, dst, src)
         # Step 4: Fit polynomial line to the transform image
-        ploty, left_fitx, right_fitx, left_curverad, right_curverad = self.line_fitting_initial(warped)
+        ploty, left_fitx, right_fitx, left_curverad, right_curverad, offset = self.line_fitting_initial(warped)
+
+        self.left_lane_history.append(left_fitx)
+        self.right_lane_history.append(right_fitx)
+
+        left_smoothed = np.mean(self.left_lane_history[-30:], axis=0)
+        right_smoothed = np.mean(self.right_lane_history[-30:], axis=0)
+
         # Step 5: Invert the transformation and return the image in the original space with the found lanes
-        lane_img = self.inverse_warp(img, warped, left_fitx, right_fitx, ploty, Minv)
+        lane_img = self.inverse_warp(img, warped, left_smoothed, right_smoothed, ploty, Minv, left_curverad,
+                                     right_curverad, offset)
+
+        # plt.imshow(lane_img)
+        # plt.show()
+
         return lane_img
 
     def find_lines_in_video(self, video_path):
@@ -332,17 +366,17 @@ class LaneFindingPipeline:
         '''
         clip = VideoFileClip(video_path)
         clip_with_lines = clip.fl_image(self.apply_pipeline)
-        clip_with_lines.write_videofile('harder_challenge_video_with_lines.mp4', audio=False)
+        clip_with_lines.write_videofile('project_video_with_lines.mp4', audio=False)
 
 
 def main():
-    test_undistort_image = cv2.imread('test_images/test6.jpg')
+    test_undistort_image = cv2.imread('test_images/test2.jpg')
     lfp = LaneFindingPipeline()
-    res = lfp.apply_pipeline(test_undistort_image)
+    # res = lfp.apply_pipeline(test_undistort_image)
     # plt.imshow(res)
     # plt.show()
-    # vid = 'harder_challenge_video.mp4'
-    # lfp.find_lines_in_video(vid)
+    vid = 'project_video.mp4'
+    lfp.find_lines_in_video(vid)
 
 
 if __name__ == "__main__":
