@@ -1,7 +1,7 @@
-import numpy as np
 import cv2
 import glob
 import matplotlib.pyplot as plt
+import numpy as np
 from moviepy.editor import VideoFileClip
 
 
@@ -54,7 +54,7 @@ class LaneFindingPipeline:
         img = np.copy(img)
         return cv2.undistort(img, mtx, dist, None, mtx)
 
-    def colour_and_gradient_threshold(self, img, s_thresh=(170, 255), sx_thresh=(20, 100)):
+    def colour_and_gradient_threshold(self, img, s_thresh=(170, 250), sx_thresh=(20, 100)):
         '''
         Apply colour and gradient thresholding to an input image.
         :param img: input image
@@ -62,11 +62,13 @@ class LaneFindingPipeline:
         :param sx_thresh: gradient theshold
         :return: thresholded image
         '''
+
+        self.frame_counter += 1
+
         img = np.copy(img)
-        # Convert to HSV color space and separate the V channel
-        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
-        l_channel = hsv[:, :, 1]
-        s_channel = hsv[:, :, 2]
+        hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
+        l_channel = hls[:, :, 1]
+        s_channel = hls[:, :, 2]
         # Sobel x
         sobelx = cv2.Sobel(l_channel, cv2.CV_64F, 1, 0)  # Take the derivative in x
         abs_sobelx = np.absolute(sobelx)  # Absolute x derivative to accentuate lines away from horizontal
@@ -80,8 +82,29 @@ class LaneFindingPipeline:
         s_binary = np.zeros_like(s_channel)
         s_binary[(s_channel >= s_thresh[0]) & (s_channel <= s_thresh[1])] = 1
 
+        HSV = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+
+        # For yellow
+        yellow = cv2.inRange(HSV, (20, 100, 100), (50, 255, 255))
+
+        # For white
+        sensitivity_1 = 68
+        white = cv2.inRange(HSV, (0, 0, 255 - sensitivity_1), (255, 20, 255))
+
+        sensitivity_2 = 60
+        HSL = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+        white_2 = cv2.inRange(HSL, (0, 255 - sensitivity_2, 0), (255, 255, sensitivity_2))
+        white_3 = cv2.inRange(img, (200, 200, 200), (255, 255, 255))
+
+        # bit_layer = your_bit_layer | yellow | white | white_2 | white_3
+
         combined_binary = np.zeros_like(sxbinary)
-        combined_binary[(s_binary == 1) | (sxbinary == 1)] = 1
+        combined_binary[
+            (s_binary==1)|(sxbinary == 1) | (white_3 == 1) | (white_2 == 1) | (white == 1) | (yellow == 1)] = 1
+
+        # plt.imshow(combined_binary)
+        # plt.show()
+
         return combined_binary
 
     def perspective_transform(self, img, src_points, dst_points):
@@ -215,12 +238,12 @@ class LaneFindingPipeline:
 
         # Calculate the new radii of curvature
         left_curverad = ((1 + (2 * left_fit_cr[0] * y_eval * ym_per_pix + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(
-                2 * left_fit_cr[0])
+            2 * left_fit_cr[0])
         right_curverad = (
                              (1 + (
                                  2 * right_fit_cr[0] * y_eval * ym_per_pix + right_fit_cr[
                                      1]) ** 2) ** 1.5) / np.absolute(
-                2 * right_fit_cr[0])
+            2 * right_fit_cr[0])
 
         lane_offset_meters = lane_offset * xm_per_pix
 
@@ -274,12 +297,12 @@ class LaneFindingPipeline:
 
         # Calculate the new radii of curvature
         left_curverad = ((1 + (2 * left_fit_cr[0] * y_eval * ym_per_pix + left_fit_cr[1]) ** 2) ** 1.5) / np.absolute(
-                2 * left_fit_cr[0])
+            2 * left_fit_cr[0])
         right_curverad = (
                              (1 + (
                                  2 * right_fit_cr[0] * y_eval * ym_per_pix + right_fit_cr[
                                      1]) ** 2) ** 1.5) / np.absolute(
-                2 * right_fit_cr[0])
+            2 * right_fit_cr[0])
 
         return ploty, left_fitx, right_fitx, left_curverad, right_curverad
 
@@ -332,7 +355,23 @@ class LaneFindingPipeline:
 
         # source and destination points for the perspective transform step
         src = np.float32([[554, 480], [733, 480], [298, 654], [1000, 654]])
-        dst = np.float32([[265, 95], [945, 95], [265, 576], [1105, 576]])
+        dst = np.float32([[225, 95], [1105, 95], [245, 576], [1105, 576]])
+
+        # cv2.circle(img, (225,95),20,(0,0,255),3)
+        # cv2.circle(img, (1105,95),20,(0,0,255),3)
+        # cv2.circle(img, (245,576),20,(0,0,255),3)
+        # cv2.circle(img, (1105,576),20,(0,0,255),3)
+        #
+        # plt.imshow(img)
+        # plt.show()
+
+
+        #
+        # if self.frame_counter % 100 == 0:
+        #
+        #     cv2.circle(img, (554, 480),20,(0,0,255),3)
+        #     plt.imshow(img)
+        #     plt.show()
 
         # Step 1: Undistort image
         undistorted = self.undistort_image(img, self.mtx, self.dist)
@@ -348,8 +387,8 @@ class LaneFindingPipeline:
         self.left_lane_history.append(left_fitx)
         self.right_lane_history.append(right_fitx)
 
-        left_smoothed = np.mean(self.left_lane_history[-30:], axis=0)
-        right_smoothed = np.mean(self.right_lane_history[-30:], axis=0)
+        left_smoothed = np.mean(self.left_lane_history[-20:], axis=0)
+        right_smoothed = np.mean(self.right_lane_history[-20:], axis=0)
 
         # Step 5: Invert the transformation and return the image in the original space with the found lanes
         lane_img = self.inverse_warp(img, warped, left_smoothed, right_smoothed, ploty, Minv, left_curverad,
@@ -370,11 +409,11 @@ class LaneFindingPipeline:
 
 
 def main():
-    test_undistort_image = cv2.imread('test_images/test2.jpg')
+    test_undistort_image = cv2.imread('test_images/test4.jpg')
     lfp = LaneFindingPipeline()
-    # res = lfp.apply_pipeline(test_undistort_image)
-    # plt.imshow(res)
-    # plt.show()
+    #res = lfp.apply_pipeline(test_undistort_image)
+    #plt.imshow(res)
+    #plt.show()
     vid = 'project_video.mp4'
     lfp.find_lines_in_video(vid)
 
